@@ -6,6 +6,10 @@ import math
 # Brain should be defined by default
 brain = Brain()
 
+# Define motors on Port 1 and Port 5 (Motor 5 is reversed to align chassis direction)
+motor_1 = Motor(Ports.PORT1, GearSetting.RATIO_18_1, False)
+motor_5 = Motor(Ports.PORT5, GearSetting.RATIO_18_1, True)
+
 # Robot configuration code
 brain_inertial = Inertial()
 
@@ -24,6 +28,93 @@ def initializeRandomSeed():
 # Initialize random seed 
 initializeRandomSeed()
 #endregion VEXcode Generated Robot Configuration
+
+# -------------------------------------------------------------
+# BROADCAST EVENTS & MOVEMENT CONTROL
+# -------------------------------------------------------------
+
+# Create events
+FWD = Event()
+RT = Event()
+LT = Event()
+
+# Motor movement callback functions
+def motor1_move_forward():
+    motor_1.spin_for(FORWARD, 425, DEGREES)
+
+def motor5_move_forward():
+    motor_5.spin_for(FORWARD, 425, DEGREES)
+
+def motor1_turn_right():
+    motor_1.spin_for(FORWARD, 220, DEGREES)
+
+def motor5_turn_right():
+    motor_5.spin_for(REVERSE, 220, DEGREES)
+
+def motor1_turn_left():
+    motor_1.spin_for(REVERSE, 220, DEGREES)
+
+def motor5_turn_left():
+    motor_5.spin_for(FORWARD, 220, DEGREES)
+
+# Register callback functions to events
+FWD(motor1_move_forward)
+FWD(motor5_move_forward)
+RT(motor1_turn_right)
+RT(motor5_turn_right)
+LT(motor1_turn_left)
+LT(motor5_turn_left)
+
+# Distance parameter: Adjustable forward steps to reach table center
+FORWARD_STEPS = 2
+
+# Hide hand during drive movements to maintain card privacy
+def drive_to_center():
+    brain.screen.clear_screen()
+    brain.screen.set_cursor(2, 1)
+    brain.screen.print("--- DRIVING ---")
+    brain.screen.set_cursor(3, 1)
+    brain.screen.print(" HAND HIDDEN ")
+    for _ in range(FORWARD_STEPS):
+        FWD.broadcast_and_wait()
+
+def drive_back_to_player():
+    brain.screen.clear_screen()
+    brain.screen.set_cursor(2, 1)
+    brain.screen.print("--- RETURNING ---")
+    brain.screen.set_cursor(3, 1)
+    brain.screen.print(" HAND HIDDEN ")
+    # Turn 180 degrees using two 90-degree left turns
+    LT.broadcast_and_wait()
+    LT.broadcast_and_wait()
+    # Drive back same distance
+    for _ in range(FORWARD_STEPS):
+        FWD.broadcast_and_wait()
+    # Turn 180 degrees back around to face center
+    LT.broadcast_and_wait()
+    LT.broadcast_and_wait()
+
+# -------------------------------------------------------------
+# CARD DRAW ANIMATION HELPERS
+# -------------------------------------------------------------
+
+# Displays an animated card back graphic when drawing cards
+def animate_card_back(draw_num, total_draws):
+    brain.screen.clear_screen()
+    brain.screen.set_cursor(1, 1)
+    if total_draws > 1:
+        header = "DRAWING (" + str(draw_num) + "/" + str(total_draws) + ")"
+    else:
+        header = "DRAWING CARD..."
+    brain.screen.print(header[0:16])
+    
+    brain.screen.set_cursor(2, 1)
+    brain.screen.print("+--------------+")
+    brain.screen.set_cursor(3, 1)
+    brain.screen.print("|  [UNO CARD]  |")
+    brain.screen.set_cursor(4, 1)
+    brain.screen.print("+--------------+")
+    wait(600, MSEC)
 
 # -------------------------------------------------------------
 # UNO GAME TRACKER & DECK MANAGER (WITH PLAYER HAND)
@@ -366,6 +457,9 @@ def process_player_turn(hand, deck, top_discard, new_cards_counter):
                         elif c_btn == "RIGHT":
                             card_pos = (card_pos + 1) % len(playable_indices)
                         elif c_btn == "CHECK":
+                            # Drive forward to table center (Hides hand during travel)
+                            drive_to_center()
+
                             played_card = hand.pop(c_idx)
                             
                             # Prompt player to manually select color when playing a Wild card from hand
@@ -374,25 +468,35 @@ def process_player_turn(hand, deck, top_discard, new_cards_counter):
                                 played_card = choose_wild_color(wild_type)
                                 
                             print("Played Card from Hand: " + played_card)
+
+                            # Return back to player starting position (Hides hand during travel)
+                            drive_back_to_player()
                             return played_card
 
             # Draw a card into the player's hand
             if selected_action == "DRAW CARD":
+                # Drive forward to table center (Hides hand during travel)
+                drive_to_center()
+
+                # Animated card back display
+                animate_card_back(1, 1)
+
                 drawn_card = draw_card(deck)
                 if drawn_card != None:
                     hand.append(drawn_card)
                     new_cards_counter[0] += 1
                     print("Drawn Card into Hand: " + drawn_card)
-                    
-                    if new_cards_counter[0] >= 2:
-                        print("=== HAND UPDATED (2+ NEW CARDS) ===")
-                        print_hand_to_screen(hand, "CHK: Continue")
                 else:
                     brain.screen.clear_screen()
                     brain.screen.set_cursor(2, 1)
                     brain.screen.print("DECK EMPTY!")
                     wait(1500, MSEC)
                     
+                # Return back to player starting position (Hides hand during travel)
+                drive_back_to_player()
+
+                # Show updated hand once back at player home position
+                print_hand_to_screen(hand, "Drawn! CHK:Next")
                 return top_discard
 
 # Main Program Execution Loop
@@ -419,24 +523,32 @@ def main_game_loop():
         
         if attack_type == "DRAW +2":
             print("Robot attacked with +2! Forcing 2 card draws...")
-            for _ in range(2):
+            # Drive to center to fetch cards
+            drive_to_center()
+            for i in range(2):
+                animate_card_back(i + 1, 2)
                 c = draw_card(uno_deck)
                 if c != None:
                     player_hand.append(c)
                     new_cards_counter[0] += 1
                     print("Attacked Draw: " + c)
+            drive_back_to_player()
             
             print_hand_to_console(player_hand)
             print_hand_to_screen(player_hand, "+2 Drawn CHK:End")
 
         elif attack_type == "DRAW +4":
             print("Robot attacked with +4! Forcing 4 card draws...")
-            for _ in range(4):
+            # Drive to center to fetch cards
+            drive_to_center()
+            for i in range(4):
+                animate_card_back(i + 1, 4)
                 c = draw_card(uno_deck)
                 if c != None:
                     player_hand.append(c)
                     new_cards_counter[0] += 1
                     print("Attacked Draw: " + c)
+            drive_back_to_player()
             
             print_hand_to_console(player_hand)
             print_hand_to_screen(player_hand, "+4 Drawn CHK:End")
